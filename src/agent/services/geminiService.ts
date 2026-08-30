@@ -140,6 +140,30 @@ function buildUserParts(text: string, attachments: MessageAttachment[] = []) {
  * 就是十份投影片內容仍留在 context，與本次檢索疊加。模型已依據那些內容回答過，
  * 保留來源摘要即可。長任務路徑刻意傳 history: [] 也是同一個原則。
  */
+function sanitizePayloadForLLM(value: any): any {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    if (value.startsWith('data:image/') || value.startsWith('data:video/') || value.startsWith('data:application/')) {
+      return `[Base64 Media String: ${value.substring(0, 30)}... (${value.length} chars)]`;
+    }
+    if (value.length > 10000) {
+      return value.substring(0, 10000) + `\n... [Content truncated for LLM context, total ${value.length} chars]`;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizePayloadForLLM);
+  }
+  if (typeof value === 'object') {
+    const sanitized: Record<string, any> = {};
+    for (const key of Object.keys(value)) {
+      sanitized[key] = sanitizePayloadForLLM(value[key]);
+    }
+    return sanitized;
+  }
+  return value;
+}
+
 function summarizeStaleToolResult(result: any): any {
   if (!result || typeof result !== 'object') return result;
 
@@ -182,7 +206,7 @@ export function buildContentsHistory(history: Message[]) {
         parts: msg.toolCallsInfo.map(tc => ({
           functionCall: {
             name: tc.name,
-            args: tc.args
+            args: sanitizePayloadForLLM(tc.args)
           }
         }))
       });
@@ -193,7 +217,7 @@ export function buildContentsHistory(history: Message[]) {
         parts: msg.toolCallsInfo.map(tc => ({
           functionResponse: {
             name: tc.name,
-            response: isStale ? summarizeStaleToolResult(tc.result) : tc.result
+            response: sanitizePayloadForLLM(isStale ? summarizeStaleToolResult(tc.result) : tc.result)
           }
         }))
       });
